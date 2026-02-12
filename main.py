@@ -172,7 +172,7 @@ class App(QMainWindow):
         layout.addLayout(btn_row)
         self.tabs.addTab(tab, "Предпросмотр")
 
-    # -------- Логика --------
+    # -------- Logic --------
     def validate_illuminant(self):
         if self.illuminant.text() not in ["D65", "D50"]:
             self.status.showMessage("Допустимо: D65 или D50", 3000)
