@@ -302,7 +302,7 @@ class App(QMainWindow):
         interp = RegularGridInterpolator((grid, grid, grid), self.lut)
         h, w, _ = self.image.shape
 
-        # Обработка изображений с 4 каналами (RGBA) или серых
+        # Обработка изображений с 4 каналами RGBA или серых
         if len(self.image.shape) == 2:
             self.image = np.stack([self.image] * 3, axis=-1)
 
@@ -332,7 +332,7 @@ class App(QMainWindow):
             data = img
 
         h, w, _ = data.shape
-        # QImage требует contiguous array
+
         qimg = QImage(data.tobytes(), w, h, 3 * w, QImage.Format.Format_RGB888)
         label.setPixmap(QPixmap.fromImage(qimg).scaled(label.size(), Qt.AspectRatioMode.KeepAspectRatio))
 
