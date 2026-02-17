@@ -191,12 +191,12 @@ class App(QMainWindow):
         size_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(size_hint)
 
-        # Компактное окно ввода формулы
+        # Окно ввода формулы
         formula_group = QGroupBox("Формула преобразования (работает с переменной 'lab')")
         formula_layout = QVBoxLayout()
         formula_layout.setSpacing(3)
 
-        # поле ввода
+        # Поле ввода
         self.editor = QTextEdit()
         self.editor.setPlainText("lab[:,0] *= 1.2  # Увеличить яркость")
         self.editor.setMaximumHeight(80)
