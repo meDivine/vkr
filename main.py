@@ -42,7 +42,6 @@ class LUTWorker(QThread):
 
     def run(self):
         try:
-            # Здесь можно добавить поддержку GPU в будущем
             if self.use_gpu:
                 print("Поддержка GPU пока не реализована! Используйте CPU")
 
@@ -68,17 +67,15 @@ class LUTWorker(QThread):
             rgb_out_nodes = np.clip(rgb_out_nodes, 0, 1)
             lut = rgb_out_nodes.reshape(self.N, self.N, self.N, 3)
 
+            # ------------------ Расчет метрик ------------------
             metrics = {}
-
-            # Создаем интерполятор по сгенерированному LUT
             interp = RegularGridInterpolator((grid, grid, grid), lut)
 
-            # Генерируем случайные тестовые точки
             np.random.seed(42)
             n_samples = 10000
             test_rgb = np.random.rand(n_samples, 3)
 
-            # Прямое преобразование
+            # Эталонное преобразование
             test_lab = rgb2lab(test_rgb.reshape(-1, 1, 3)).reshape(-1, 3)
             env_test = {"np": np, "lab": test_lab}
             exec(self.code, {"__builtins__": {}}, env_test)
@@ -90,18 +87,14 @@ class LUTWorker(QThread):
             # Преобразование через LUT
             test_rgb_lut = interp(test_rgb)
 
-            # Сравнение в пространстве Lab
+            # Сравнение
             test_lab_lut = rgb2lab(test_rgb_lut.reshape(-1, 1, 3)).reshape(-1, 3)
-
-            # Рассчитываем ΔE
             delta_e = deltaE_cie76(test_lab_transformed, test_lab_lut)
 
             metrics['Mean Delta E'] = np.mean(delta_e)
             metrics['Max Delta E'] = np.max(delta_e)
 
-            # Сравнение в пространстве RGB
             test_rgb_truth = lab2rgb(test_lab_transformed.reshape(-1, 1, 3)).reshape(-1, 3)
-
             mse = np.mean((test_rgb_truth - test_rgb_lut) ** 2)
             if mse == 0:
                 metrics['PSNR (dB)'] = float('inf')
@@ -120,7 +113,7 @@ class App(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("RGB <-> Lab LUT Generator")
-        self.resize(1000, 750)
+        self.resize(1000, 900)  # Немного увеличил высоту для одной страницы
 
         self.lut = None
         self.image = None
@@ -129,74 +122,51 @@ class App(QMainWindow):
         self.progress = QProgressBar()
         self.status.addPermanentWidget(self.progress)
 
-        self.tabs = QTabWidget()
-        self.setCentralWidget(self.tabs)
+        # Центральный виджет и главный Layout
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setSpacing(10)
 
-        self.init_function_tab()
-        self.init_preview_tab()
+        # ================= БЛОК 1: НАСТРОЙКИ =================
+        settings_group = QGroupBox("Настройки генерации")
+        settings_layout = QHBoxLayout()
+        settings_layout.setSpacing(10)
 
-    # -------- TAB 1 --------
-    def init_function_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setSpacing(5)
-
-        # Верхняя панель с настройками
-        top = QHBoxLayout()
-        top.setSpacing(5)
-
-        top.addWidget(QLabel("Размер LUT:"))
-
-        # Инпут ввода размера лута
+        # Размер LUT
+        settings_layout.addWidget(QLabel("Размер LUT:"))
         self.lut_size_spin = QSpinBox()
         self.lut_size_spin.setRange(2, 256)
         self.lut_size_spin.setValue(33)
-        self.lut_size_spin.setFixedWidth(100)  # Увеличил ширину
-        self.lut_size_spin.setToolTip(
-            "Размер сетки LUT. Можно ввести число от 2 до 256.\n"
-            "Рекомендации:\n"
-            "• 17  - быстро, низкое качество\n"
-            "• 33  - стандарт, хороший баланс\n"
-            "• 65  - высокое качество\n"
-            "• 129 - максимальное качество (может быть медленно)"
-        )
-        # Активируем ручной ввод
-        self.lut_size_spin.setKeyboardTracking(True)
-        self.lut_size_spin.setAccelerated(True)
+        self.lut_size_spin.setFixedWidth(120)
+        self.lut_size_spin.setToolTip("Рекомендуется: 17, 33, 65")
+        settings_layout.addWidget(self.lut_size_spin)
 
-        top.addWidget(self.lut_size_spin)
-
+        # Иллюминант
+        settings_layout.addWidget(QLabel("Ill:"))
         self.illuminant = QLineEdit("D65")
-        self.illuminant.textChanged.connect(self.validate_illuminant)
         self.illuminant.setFixedWidth(50)
-        top.addWidget(QLabel("Ill:"))
-        top.addWidget(self.illuminant)
+        self.illuminant.textChanged.connect(self.validate_illuminant)
+        settings_layout.addWidget(self.illuminant)
 
-        self.clip_cb = QCheckBox("Клиппинг")
+        # Клиппинг
+        self.clip_cb = QCheckBox("Клиппинг гамута")
         self.clip_cb.setChecked(True)
-        top.addWidget(self.clip_cb)
+        settings_layout.addWidget(self.clip_cb)
 
+        # GPU
         self.gpu_cb = QCheckBox("GPU")
-        self.gpu_cb.setEnabled(True)
-        self.gpu_cb.setToolTip("Использовать GPU для ускорения (в разработке)")
-        top.addWidget(self.gpu_cb)
+        self.gpu_cb.setToolTip("В разработке")
+        settings_layout.addWidget(self.gpu_cb)
 
-        top.addStretch()
+        settings_layout.addStretch()
+        settings_group.setLayout(settings_layout)
+        main_layout.addWidget(settings_group)
 
-        layout.addLayout(top)
-
-        # Добавляем подсказку для размера
-        size_hint = QLabel("Рекомендуемые значения: 17 (быстро), 33 (стандарт), 65 (качество), 129 (макс. качество)")
-        size_hint.setStyleSheet("color: gray; font-size: 9pt;")
-        size_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(size_hint)
-
-        # Окно ввода формулы
-        formula_group = QGroupBox("Формула преобразования (работает с переменной 'lab')")
+        # ================= БЛОК 2: ФОРМУЛА =================
+        formula_group = QGroupBox("Формула преобразования (Python код)")
         formula_layout = QVBoxLayout()
-        formula_layout.setSpacing(3)
 
-        # Поле ввода
         self.editor = QTextEdit()
         self.editor.setPlainText("lab[:,0] *= 1.2  # Увеличить яркость")
         self.editor.setMaximumHeight(80)
@@ -204,82 +174,90 @@ class App(QMainWindow):
         PythonHighlighter(self.editor.document())
         formula_layout.addWidget(self.editor)
 
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(3)
-
-        check_btn = QPushButton("Проверить")
-        check_btn.setFixedHeight(25)
+        # Кнопки управления формулой
+        btn_formula_layout = QHBoxLayout()
+        check_btn = QPushButton("Проверить синтаксис")
         check_btn.clicked.connect(self.check_syntax)
-        btn_layout.addWidget(check_btn)
+        btn_formula_layout.addWidget(check_btn)
 
         gen_btn = QPushButton("Сгенерировать LUT")
-        gen_btn.setFixedHeight(25)
+        gen_btn.setStyleSheet(" font-weight: bold;")
         gen_btn.clicked.connect(self.generate_lut)
-        btn_layout.addWidget(gen_btn)
+        btn_formula_layout.addWidget(gen_btn)
 
-        btn_layout.addStretch()
-        formula_layout.addLayout(btn_layout)
+        btn_formula_layout.addStretch()
+        formula_layout.addLayout(btn_formula_layout)
 
         formula_group.setLayout(formula_layout)
-        layout.addWidget(formula_group)
+        main_layout.addWidget(formula_group)
 
-        # Поле для метрик
-        metrics_group = QGroupBox("Метрики качества LUT")
-        metrics_layout = QVBoxLayout()
-        metrics_layout.setSpacing(3)
-
-        self.metrics_label = QLabel("Метрики появятся после генерации...")
-        self.metrics_label.setStyleSheet("padding: 5px; border: 1px solid #ccc;")
+        # ================= БЛОК 3: МЕТРИКИ =================
+        self.metrics_label = QLabel("Метрики качества: ожидание генерации...")
+        self.metrics_label.setStyleSheet(
+            "padding: 8px; border: 1px solid #dee2e6; border-radius: 4px;")
         self.metrics_label.setWordWrap(True)
-        self.metrics_label.setMinimumHeight(60)
-        self.metrics_label.setMaximumHeight(80)
-        metrics_layout.addWidget(self.metrics_label)
+        main_layout.addWidget(self.metrics_label)
 
-        metrics_group.setLayout(metrics_layout)
-        layout.addWidget(metrics_group)
+        # ================= БЛОК 4: ПРЕДПРОСМОТР =================
+        preview_group = QGroupBox("Предпросмотр")
+        preview_layout = QVBoxLayout()
 
-        layout.addStretch()
-
-        self.tabs.addTab(tab, "Функция")
-
-    def init_preview_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        img_row = QHBoxLayout()
+        # Ряд с картинками
+        images_row = QHBoxLayout()
         self.orig_label = QLabel("Оригинал")
-        self.result_label = QLabel("После LUT")
+        self.result_label = QLabel("Результат LUT")
         for lbl in [self.orig_label, self.result_label]:
-            lbl.setFixedSize(400, 300)
+            lbl.setFixedSize(450, 300)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("background-color: black;")
-        img_row.addWidget(self.orig_label)
-        img_row.addWidget(self.result_label)
-        layout.addLayout(img_row)
+            lbl.setStyleSheet("background-color: #333333; color: white; border: 1px solid #555;")
+            lbl.setScaledContents(False)
+        images_row.addWidget(self.orig_label)
+        images_row.addWidget(self.result_label)
+        preview_layout.addLayout(images_row)
 
-        btn_row = QHBoxLayout()
+        # Ряд кнопок предпросмотра
+        btn_preview_row = QHBoxLayout()
         load_btn = QPushButton("Загрузить изображение")
         load_btn.clicked.connect(self.load_image)
-        btn_row.addWidget(load_btn)
-        apply_btn = QPushButton("Применить LUT")
-        apply_btn.clicked.connect(self.apply_lut)
-        btn_row.addWidget(apply_btn)
-        layout.addLayout(btn_row)
+        btn_preview_row.addWidget(load_btn)
 
-        self.tabs.addTab(tab, "Предпросмотр")
+        apply_btn = QPushButton("Применить LUT к изображению")
+        apply_btn.clicked.connect(self.apply_lut)
+        btn_preview_row.addWidget(apply_btn)
+
+        export_btn = QPushButton("Экспорт .cube")
+        export_btn.clicked.connect(self.export_lut)
+        btn_preview_row.addWidget(export_btn)
+
+        btn_preview_row.addStretch()
+        preview_layout.addLayout(btn_preview_row)
+
+        preview_group.setLayout(preview_layout)
+        main_layout.addWidget(preview_group, stretch=1)  # stretch=1 заставляет этот блок занимать все оставшееся место
+
+    # ----------------- Логика -----------------
+    def validate_illuminant(self, text):
+        valid = text in ["A", "B", "C", "D50", "D55", "D65", "D75", "E", "F2", "F7", "F11"]
+        self.illuminant.setStyleSheet("border: 1px solid red;" if not valid else "")
+
+    def check_syntax(self):
+        try:
+            code = compile(self.editor.toPlainText(), '<string>', 'exec')
+            # Простая проверка переменных
+            env = {"np": np, "lab": np.zeros((10, 3))}
+            exec(code, {"__builtins__": {}}, env)
+            QMessageBox.information(self, "Успех", "Синтаксис корректен.")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка синтаксиса", str(e))
 
     def generate_lut(self):
         self.progress.setValue(0)
-        self.metrics_label.setText("Расчет...")
+        self.metrics_label.setText("Генерация и расчет метрик...")
 
         N = self.lut_size_spin.value()
         use_gpu = self.gpu_cb.isChecked()
 
-        self.worker = LUTWorker(
-            N,
-            self.editor.toPlainText(),
-            self.clip_cb.isChecked(),
-            use_gpu
-        )
+        self.worker = LUTWorker(N, self.editor.toPlainText(), self.clip_cb.isChecked(), use_gpu)
         self.worker.finished.connect(self.lut_ready)
         self.worker.error.connect(self.on_error)
         self.worker.start()
@@ -288,60 +266,75 @@ class App(QMainWindow):
         self.lut = lut
         self.progress.setValue(100)
 
-        # Формируем текст метрик
-        text = f"<b>Размер LUT: {self.lut_size_spin.value()}³</b><br>"
-        text += f"Средняя ΔE: <b>{metrics['Mean Delta E']:.4f}</b><br>"
-        text += f"Макс. ΔE: <b>{metrics['Max Delta E']:.4f}</b><br>"
-        text += f"PSNR: <b>{metrics['PSNR (dB)']:.2f} dB</b>"
+        text = (f"<b>Метрики (LUT {self.lut_size_spin.value()}³):</b> &nbsp;&nbsp;&nbsp;"
+                f"Средняя ΔE: <b>{metrics['Mean Delta E']:.4f}</b> &nbsp;&nbsp;&nbsp;"
+                f"Макс. ΔE: <b>{metrics['Max Delta E']:.4f}</b> &nbsp;&nbsp;&nbsp;"
+                f"PSNR: <b>{metrics['PSNR (dB)']:.2f} dB</b>")
 
         self.metrics_label.setText(text)
-        self.status.showMessage("LUT сгенерирован", 3000)
+        self.status.showMessage("LUT успешно сгенерирован", 3000)
 
     def on_error(self, e):
-        QMessageBox.critical(self, "Ошибка", str(e))
-        self.metrics_label.setText("Ошибка при расчете.")
+        QMessageBox.critical(self, "Ошибка генерации", str(e))
+        self.metrics_label.setText(f"<b style='color:red'>Ошибка:</b> {e}")
+        self.progress.setValue(0)
 
     def load_image(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open", "", "Images (*.png *.jpg *.jpeg *.tiff)")
+        path, _ = QFileDialog.getOpenFileName(self, "Открыть изображение", "", "Images (*.png *.jpg *.jpeg *.tiff)")
         if path:
             self.image = img_as_float(imread(path))
             if self.image.shape[-1] == 4:
                 self.image = self.image[..., :3]
             self.show_img(self.image, self.orig_label)
+            self.result_label.clear()
+            self.result_label.setText("Нажмите 'Применить LUT'")
 
     def apply_lut(self):
-        if self.lut is None or self.image is None:
-            QMessageBox.warning(self, "Ошибка", "Сначала сгенерируйте LUT и загрузите изображение")
+        if self.lut is None:
+            QMessageBox.warning(self, "Внимание", "Сначала сгенерируйте LUT.")
+            return
+        if self.image is None:
+            QMessageBox.warning(self, "Внимание", "Сначала загрузите изображение.")
             return
 
+        # Применение
         grid = np.linspace(0, 1, self.lut.shape[0])
         interp = RegularGridInterpolator((grid, grid, grid), self.lut)
         h, w, _ = self.image.shape
 
-        # Применяем LUT
+        # Обработка изображений с 4 каналами (RGBA) или серых
+        if len(self.image.shape) == 2:
+            self.image = np.stack([self.image] * 3, axis=-1)
+
         result = interp(self.image.reshape(-1, 3))
         result = np.clip(result.reshape(h, w, 3), 0, 1)
         self.show_img(result, self.result_label)
 
+    def export_lut(self):
+        if self.lut is None:
+            QMessageBox.warning(self, "Внимание", "Нечего экспортировать. Сгенерируйте LUT.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Сохранить LUT", "lut.cube", "Cube LUT (*.cube)")
+        if path:
+            with open(path, "w") as f:
+                N = self.lut.shape[0]
+                f.write(f"LUT_3D_SIZE {N}\n")
+                for r in range(N):
+                    for g in range(N):
+                        for b in range(N):
+                            f.write("{:.6f} {:.6f} {:.6f}\n".format(*self.lut[r, g, b]))
+            self.status.showMessage(f"LUT сохранен в {path}", 5000)
+
     def show_img(self, img, label):
-        img8 = (img * 255).astype(np.uint8)
-        h, w, _ = img8.shape
-        qimg = QImage(img8.data, w, h, 3 * w, QImage.Format.Format_RGB888)
-        label.setPixmap(QPixmap.fromImage(qimg).scaled(label.size(), Qt.AspectRatioMode.KeepAspectRatio))
-
-    def validate_illuminant(self, text):
-        if text not in ["A", "B", "C", "D50", "D55", "D65", "D75", "E", "F2", "F7", "F11"]:
-            self.illuminant.setStyleSheet("border: 1px solid red;")
+        if img.dtype.kind == 'f':
+            data = (img * 255).astype(np.uint8)
         else:
-            self.illuminant.setStyleSheet("")
+            data = img
 
-    def check_syntax(self):
-        try:
-            env = {"np": np, "lab": np.zeros((10, 3))}
-            compile(self.editor.toPlainText(), '<string>', 'exec')
-            QMessageBox.information(self, "Проверка синтаксиса", "Синтаксис корректен!")
-        except SyntaxError as e:
-            QMessageBox.critical(self, "Ошибка синтаксиса", str(e))
+        h, w, _ = data.shape
+        # QImage требует contiguous array
+        qimg = QImage(data.tobytes(), w, h, 3 * w, QImage.Format.Format_RGB888)
+        label.setPixmap(QPixmap.fromImage(qimg).scaled(label.size(), Qt.AspectRatioMode.KeepAspectRatio))
 
 
 if __name__ == "__main__":
