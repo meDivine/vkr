@@ -204,7 +204,6 @@ class App(QMainWindow):
         PythonHighlighter(self.editor.document())
         formula_layout.addWidget(self.editor)
 
-        # Компактные кнопки
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(3)
 
